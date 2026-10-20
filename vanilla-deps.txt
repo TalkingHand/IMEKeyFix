@@ -1,0 +1,16 @@
+# IMEKeyFix: vanilla dependencies (format: _guide/README.md "바닐라 의존 목록")
+# checked: 42.21.0
+#
+# kind	target	note
+
+java-patch	org.lwjglx.opengl.Display.processMessages()	OnEnter; assumes it runs every frame on the GLFW window thread right before glfwPollEvents (Display.java:332, called from RenderThread.lockStepRenderStep)
+java-call	org.lwjglx.opengl.Display.getWindow()	GLFW window handle (Display.java:279)
+java-call	org.lwjgl.glfw.GLFWNativeWin32.glfwGetWin32Window(long)	LWJGL bundled in projectzomboid.jar
+java-call	com.sun.jna.NativeLibrary / Function	JNA bundled in projectzomboid.jar (jnidispatch.dll in game folder)
+lua-field	zombie.core.Core.currentTextEntryBox	the focused text box (Core.java:386); set by UITextBox2.focus/onMouseDown, cleared by unfocus
+java-call	zombie.ui.UITextEntryInterface.isEditable/isDoingTextEntry	same test as Core.isDoingTextEntry (Core.java:2052)
+java-call	zombie.ui.UIElement.isReallyVisible()	hidden focused boxes count as not typing
+assume	crafting/building search boxes are ISTextEntryBox	client/Entity/ISUI/CraftRecipe/ISWidgetRecipeFilterPanel.lua:16; if they move to another widget the IME stays off there
+assume	GLFW drops WM_KEYDOWN with VK_PROCESSKEY	the reason the mod exists; a GLFW update that keeps those keys would make it unnecessary
+lua-call	ISEntityUI.OpenHandcraftWindow / OpenBuildWindow, ISEntityUI.players[0].windows[key].instance	tests only (tests/IMEKeyFix_Test.lua)
+lua-call	ISChat.instance:focus() / unfocus()	tests only
