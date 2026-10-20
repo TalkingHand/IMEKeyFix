@@ -1,5 +1,6 @@
 name=IME Key Fix
 id=IMEKeyFix
+poster=poster.png
 description=Hotkeys work while a Korean/Chinese/Japanese IME is on: the IME is turned off in game and back on in text boxes. Client-only Java mod. Requires ZombieBuddy.
 author=TalkingHand
 url=https://github.com/TalkingHand/IMEKeyFix
