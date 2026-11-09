@@ -9,12 +9,26 @@ public class Patches {
         @Patch.OnEnter
         public static void enter() {
             Ime.update();
-            Ime.fakeEnterDuringComposition();
+            Ime.runFakeInput();
         }
 
         @Patch.OnExit
         public static void exit() {
-            Ime.flush();
+            Ime.afterPoll();
+        }
+    }
+
+    /** Main thread, where key and character events are applied to the focused text box. */
+    @Patch(className = "zombie.core.Core", methodName = "updateKeyboard")
+    public static class UpdateKeyboard {
+        @Patch.OnEnter
+        public static void enter() {
+            Preedit.before();
+        }
+
+        @Patch.OnExit
+        public static void exit() {
+            Preedit.after();
         }
     }
 

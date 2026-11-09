@@ -17,9 +17,9 @@ box takes Hangul right away; no extra 한/영 press.
   same Windows mechanism and should work too, but were not tried.
 - Key rebinding in the options also works with the IME in native mode: the rebind dialog is not a
   text box, so it records the key itself (e.g. `Q`).
-- The game cannot show IME composition text (the syllable being composed) inside its text boxes; text
-  appears when it is committed. That is vanilla behaviour and unchanged by this mod, so a search box
-  filters by the committed text only.
+- The syllable being composed shows in the text box right away, and search boxes filter by it
+  (e.g. typing ㄴ in the crafting search). In vanilla only committed text appears.
+- Clicking elsewhere while a syllable is being composed keeps it as typed text. Esc drops it.
 - Pressing Enter while a syllable is still being composed (e.g. a lone ㅋ at the end of a chat
   line) keeps that syllable. In vanilla it is lost: Windows sends Enter before the committed
   character and the game closes the box first.
@@ -50,7 +50,15 @@ While the IME is attached, each frame starts by checking whether a syllable is b
 back (`Keyboard.addKeyEvent` patch) and queued when `processMessages` returns, after the character
 the IME committed in the same poll. `UITextBox2.onKeyEnter` is patched to refresh the box text
 (`updateText`) first, because a character typed in the same frame only reaches `getText()` on
-the next frame. If a call fails it logs
+the next frame.
+
+The composition text (`ImmGetCompositionStringW`) is read after every poll and stored with that
+poll's keyboard event queue. On the main thread, `Core.updateKeyboard` is patched: on enter the
+shown composition is taken out of the focused box's `internalText`, so the frame's key and
+character events (the IME's commit, Enter, Esc) apply to committed text only; on exit the
+composition that goes with those events is put back at the cursor and `onTextChange` runs if it
+changed. If the box stopped text entry while showing one, the text stays and the IME's copy is
+cancelled (`ImmNotifyIME` `CPS_CANCEL`). Single-line, unmasked boxes only. If a call fails it logs
 `[IMEKeyFix] ERROR ...` once and stops switching for the session.
 
 ## Layout

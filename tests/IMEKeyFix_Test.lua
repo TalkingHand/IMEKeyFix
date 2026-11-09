@@ -95,3 +95,58 @@ function T.enteredWithSyllable()
     -- cursor position after setText is not the point; the syllable must be in the submitted text
     return T.entered == "ab" .. T.syllable or T.entered == T.syllable .. "ab"
 end
+
+-- Composition shown in the box (fake IME via IMEKeyFix.setTestComposition / fakeInput)
+T.J = { n = "ㄴ", na = "나", k = "ㅋ", d = "ㄷ" }
+
+function T.openPreeditBox()
+    T.closeBox()
+    T.openBox()
+    T.seen = nil
+    T.box.onTextChange = function(self)
+        T.seen = self:getInternalText()
+    end
+    T.box.onOtherKey = function(self, key)
+        if key == 1 then self:unfocus() end
+    end
+    T.box:setText("ab")
+    T.box.javaObject:setCursorPos(2)
+end
+
+function T.compose(key)
+    IMEKeyFix.setTestComposition(key and T.J[key] or "")
+end
+
+-- internal text is "ab" followed by the listed T.J keys
+local function expected(...)
+    local s = "ab"
+    for _, k in ipairs({...}) do s = s .. T.J[k] end
+    return s
+end
+
+function T.internalIs(...)
+    local want, got = expected(...), T.box:getInternalText()
+    if got ~= want then log("internal text [" .. tostring(got) .. "] want [" .. want .. "]") end
+    return got == want
+end
+
+function T.seenIs(...)
+    local want = expected(...)
+    if T.seen ~= want then log("onTextChange saw [" .. tostring(T.seen) .. "] want [" .. want .. "]") end
+    return T.seen == want
+end
+
+function T.commit(key)
+    IMEKeyFix.fakeInput(0, T.J[key], "")
+end
+
+function T.fakeEsc()
+    IMEKeyFix.fakeInput(256, "", "")
+end
+
+function T.searchIs(key, j)
+    local box = searchBox(key)
+    local got = box and box:getInternalText()
+    log(key .. " search internal text [" .. tostring(got) .. "]")
+    return got == T.J[j]
+end

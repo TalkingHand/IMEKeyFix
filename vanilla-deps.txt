@@ -8,9 +8,15 @@ java-patch	org.lwjglx.opengl.Display.processMessages()	OnExit; queues Enter held
 java-patch	org.lwjglx.input.Keyboard.addKeyEvent(int,int)	OnEnter skipOn; called from the GLFW key callback (Display.java:714) with GLFW key codes (257 Enter, 335 KP Enter) and GLFW actions; holds Enter while the IME is composing
 java-call	org.lwjglx.input.Keyboard.addKeyEvent / addCharEvent	re-queue held keys; test fake (KeyEventQueue keeps key and char events in one ordered queue)
 assume	Core.updateKeyboard handles Enter (onKeyEnter) before later char events and drops them once the box stops text entry	the reason Enter is held (Core.java:2061, 2131)
-assume	the IME's committed character (WM_CHAR) arrives in the same glfwPollEvents as the Enter key	checked by hand with the Windows Korean IME only
+assume	the IME's committed character (WM_CHAR) arrives in the same glfwPollEvents as the Enter key	the in-game test fakes this order; real IME typing decides it
 java-patch	zombie.ui.UITextBox2.onKeyEnter()	OnEnter; calls updateText() first: putCharacter only changes internalText and getText() follows in update(), so a char from the same frame as Enter was missing from the submitted text (UITextBox2.java:757, 1030, 1261)
 java-call	zombie.ui.UITextBox2.updateText()	text = internalText (masked: stars)
+java-patch	zombie.core.Core.updateKeyboard()	OnEnter/OnExit; main thread, applies the frame's key and char events to Core.currentTextEntryBox (Core.java:2129); called every frame from DoFrameReady
+java-call	zombie.ui.UITextBox2.internalText (public field), getCursorPos/setCursorPos, onTextChange, isMasked/isMultipleLine/isOnlyNumbers/isOnlyText/getMaxTextLength	composition shown in the box (UITextBox2.java:49, 838, 945)
+java-call	zombie.ui.UITextBox2.toSelectionIndex (private field, reflection)	no composition shown while text is selected; logs WARN and stops showing it if the field goes away
+java-call	zombie.input.GameKeyboard.getEventQueuePolling() / getEventQueue()	double-buffered event queues (KeyboardStateCache); the composition is stored per queue so the main thread sees it with the same poll's events
+assume	recipe search boxes read getInternalText() in onTextChange	client/Entity/ISUI/CraftRecipe/ISWidgetRecipeFilterPanel.lua:206
+java-call	imm32 ImmNotifyIME(NI_COMPOSITIONSTR, CPS_CANCEL)	drop the IME's composition once it was kept as text
 java-call	imm32 ImmGetCompositionStringW(GCS_COMPSTR)	whether a syllable is being composed when the frame's poll starts
 java-call	org.lwjglx.opengl.Display.getWindow()	GLFW window handle (Display.java:279)
 java-call	org.lwjgl.glfw.GLFWNativeWin32.glfwGetWin32Window(long)	LWJGL bundled in projectzomboid.jar

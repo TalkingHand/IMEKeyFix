@@ -1,11 +1,15 @@
 package talkinghand.imekeyfix;
 
 import com.sun.jna.Function;
+import com.sun.jna.Memory;
 import com.sun.jna.NativeLibrary;
 import com.sun.jna.Pointer;
+import java.util.IdentityHashMap;
 import org.lwjgl.glfw.GLFWNativeWin32;
+import org.lwjglx.input.Keyboard;
 import org.lwjglx.opengl.Display;
 import zombie.core.Core;
+import zombie.input.GameKeyboard;
 import zombie.ui.UIElement;
 import zombie.ui.UITextEntryInterface;
 
@@ -17,14 +21,16 @@ import zombie.ui.UITextEntryInterface;
  * context on the window the keys reach GLFW as plain keys. The thread's input context itself is
  * kept, so attaching it again restores the IME with its last mode (e.g. Hangul) for text boxes.
  *
- * IMM calls only work on the thread that owns the window, so {@link #update()} runs from
- * Display.processMessages (just before glfwPollEvents).
+ * IMM calls only work on the thread that owns the window, so everything here runs from
+ * Display.processMessages (around glfwPollEvents). The text box side is in {@link Preedit}.
  */
 public final class Ime {
     private Ime() {}
 
     private static final int IACE_DEFAULT = 0x0010;
     private static final int GCS_COMPSTR = 0x0008;
+    private static final int NI_COMPOSITIONSTR = 0x0015;
+    private static final int CPS_CANCEL = 0x0004;
     private static final int GLFW_KEY_ENTER = 257;
     private static final int GLFW_KEY_KP_ENTER = 335;
 
@@ -43,13 +49,23 @@ public final class Ime {
     private static Function getContext;
     private static Function releaseContext;
     private static Function compositionString;
+    private static Function notify;
 
     // Enter while composing: see deferKey()
     static boolean composing;      // the IME had an uncommitted composition when this frame's poll began
     static int deferred;           // Enter events moved behind the commit, for status()
-    static String testChar;        // tests: fake one "Enter during composition" next frame
     private static final java.util.ArrayList<int[]> held = new java.util.ArrayList<>();
     private static boolean flushing;
+
+    // composition text after each poll, per keyboard event queue (see recordComposition())
+    private static final IdentityHashMap<Object, String> comps = new IdentityHashMap<>();
+    /** Set by the main thread when a composition was kept as text: drop the IME's copy. */
+    static volatile boolean cancelRequested;
+    static int cancels;
+
+    // tests: fake IME input. testComp replaces the IME's composition text while non-null.
+    static volatile String testComp;
+    private static volatile Object[] testInput;   // {key, commit, compAfter}
 
     /** Whether the player is typing in an editable, visible text box (search, chat, sign text). */
     static boolean typing() {
@@ -58,15 +74,22 @@ public final class Ime {
         return !(box instanceof UIElement) || ((UIElement) box).isReallyVisible();
     }
 
+    /** Display.processMessages enter, before glfwPollEvents. */
     public static void update() {
         if (broken) return;
         try {
-            composing = applied == 1 && compositionLength() > 0;
+            composing = applied == 1 && !composition().isEmpty();
             long window = Display.getWindow();
             if (window == 0L) return;
             long h = GLFWNativeWin32.glfwGetWin32Window(window);
             if (h == 0L) return;
             int want = (!enabled || typing()) ? 1 : 0;
+            if (applied == 1 && h == hwnd && (cancelRequested || (want == 0 && composing))) {
+                // a composition kept as text by Preedit, or left behind in a box that lost focus
+                cancelComposition();
+                composing = false;
+            }
+            cancelRequested = false;
             if (h == hwnd && want == applied) return;
             if (associate == null) load();
             if (thread == null) {
@@ -89,6 +112,12 @@ public final class Ime {
         }
     }
 
+    /** Display.processMessages exit: held keys go behind this poll's characters, then the composition is noted. */
+    public static void afterPoll() {
+        flush();
+        recordComposition();
+    }
+
     /** Whether the window has an input context right now (window thread only, else null). */
     static Boolean attached() {
         if (associate == null || hwnd == 0L) return null;
@@ -98,15 +127,65 @@ public final class Ime {
         return true;
     }
 
-    /** Length in bytes of the window's uncommitted composition, 0 if none (window thread only). */
-    static int compositionLength() {
-        if (compositionString == null || hwnd == 0L) return 0;
+    /** The window's uncommitted composition text, "" if none (window thread only). */
+    static String composition() {
+        String t = testComp;
+        if (t != null) return t;
+        if (compositionString == null || hwnd == 0L || applied != 1) return "";
         Pointer ctx = (Pointer) getContext.invoke(Pointer.class, new Object[]{new Pointer(hwnd)});
-        if (ctx == null) return 0;
+        if (ctx == null) return "";
         try {
-            return compositionString.invokeInt(new Object[]{ctx, GCS_COMPSTR, Pointer.NULL, 0});
+            int bytes = compositionString.invokeInt(new Object[]{ctx, GCS_COMPSTR, Pointer.NULL, 0});
+            if (bytes <= 0) return "";
+            Memory buf = new Memory(bytes);
+            int got = compositionString.invokeInt(new Object[]{ctx, GCS_COMPSTR, buf, bytes});
+            if (got <= 0) return "";
+            return new String(buf.getCharArray(0, got / 2));
         } finally {
             releaseContext.invokeInt(new Object[]{new Pointer(hwnd), ctx});
+        }
+    }
+
+    /** Drop the IME's uncommitted composition (window thread only). */
+    private static void cancelComposition() {
+        cancels++;
+        if (testComp != null) {
+            testComp = "";
+            return;
+        }
+        if (notify == null || hwnd == 0L) return;
+        Pointer ctx = (Pointer) getContext.invoke(Pointer.class, new Object[]{new Pointer(hwnd)});
+        if (ctx == null) return;
+        try {
+            notify.invokeInt(new Object[]{ctx, NI_COMPOSITIONSTR, CPS_CANCEL, 0});
+        } finally {
+            releaseContext.invokeInt(new Object[]{new Pointer(hwnd), ctx});
+        }
+    }
+
+    /**
+     * The composition after this poll, stored with the event queue that got this poll's key and
+     * character events. The main thread reads the queue's events and its composition together
+     * ({@link #compositionFor}), so a commit (character event + composition gone) is never seen half.
+     */
+    private static void recordComposition() {
+        String c = "";
+        try {
+            if (!broken && applied == 1) c = composition();
+        } catch (Throwable t) {
+            c = "";
+        }
+        Object q = GameKeyboard.getEventQueuePolling();
+        synchronized (comps) {
+            comps.put(q, c);
+        }
+    }
+
+    /** Main thread: the composition that goes with the event queue being read this frame. */
+    static String compositionFor(Object queue) {
+        synchronized (comps) {
+            String s = comps.get(queue);
+            return s == null ? "" : s;
         }
     }
 
@@ -128,15 +207,14 @@ public final class Ime {
         return false;
     }
 
-    /** Display.processMessages exit: queue the held key events behind this poll's characters. */
-    public static void flush() {
+    private static void flush() {
         if (held.isEmpty()) {
             composing = false;
             return;
         }
         flushing = true;
         try {
-            for (int[] e : held) org.lwjglx.input.Keyboard.addKeyEvent(e[0], e[1]);
+            for (int[] e : held) Keyboard.addKeyEvent(e[0], e[1]);
             deferred++;
         } finally {
             held.clear();
@@ -145,15 +223,24 @@ public final class Ime {
         }
     }
 
-    /** Tests: next frame, act as if Enter was pressed during composition and the IME then committed c. */
-    public static void fakeEnterDuringComposition() {
-        String c = testChar;
-        if (c == null) return;
-        testChar = null;
-        composing = true;
-        org.lwjglx.input.Keyboard.addKeyEvent(GLFW_KEY_ENTER, 1);
-        org.lwjglx.input.Keyboard.addKeyEvent(GLFW_KEY_ENTER, 0);
-        for (char ch : c.toCharArray()) org.lwjglx.input.Keyboard.addCharEvent(ch);
+    /** Tests: next frame, a key (GLFW code, 0 = none) and the IME's commit arrive in one poll, key first. */
+    static void fakeInput(int key, String commit, String compAfter) {
+        testInput = new Object[]{key, commit, compAfter};
+    }
+
+    /** Display.processMessages enter, after update(): replay a fake input as one poll would. */
+    public static void runFakeInput() {
+        Object[] in = testInput;
+        if (in == null) return;
+        testInput = null;
+        int key = (Integer) in[0];
+        if (key == GLFW_KEY_ENTER) composing = true;
+        if (key != 0) {
+            Keyboard.addKeyEvent(key, 1);
+            Keyboard.addKeyEvent(key, 0);
+        }
+        for (char ch : ((String) in[1]).toCharArray()) Keyboard.addCharEvent(ch);
+        testComp = (String) in[2];
     }
 
     private static void load() {
@@ -162,6 +249,7 @@ public final class Ime {
         getContext = imm.getFunction("ImmGetContext");
         releaseContext = imm.getFunction("ImmReleaseContext");
         compositionString = imm.getFunction("ImmGetCompositionStringW");
+        notify = imm.getFunction("ImmNotifyIME");
     }
 
     private static void fail(String msg) {
@@ -173,6 +261,8 @@ public final class Ime {
 
     static String status() {
         return "enabled=" + enabled + " typing=" + typing() + " applied=" + applied
-                + " checked=" + checked + " switches=" + switches + " deferredEnter=" + deferred + " thread=" + thread + (error != null ? " error=" + error : "");
+                + " checked=" + checked + " switches=" + switches + " deferredEnter=" + deferred
+                + " cancels=" + cancels + " preedit=[" + Preedit.text + "] kept=" + Preedit.kept
+                + " thread=" + thread + (error != null ? " error=" + error : "");
     }
 }
