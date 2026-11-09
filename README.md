@@ -17,8 +17,12 @@ box takes Hangul right away; no extra 한/영 press.
   same Windows mechanism and should work too, but were not tried.
 - Key rebinding in the options also works with the IME in native mode: the rebind dialog is not a
   text box, so it records the key itself (e.g. `Q`).
-- The game cannot show IME composition text (the word being composed) inside its text boxes; text
-  appears when it is committed. That is vanilla behaviour and unchanged by this mod.
+- The game cannot show IME composition text (the syllable being composed) inside its text boxes; text
+  appears when it is committed. That is vanilla behaviour and unchanged by this mod, so a search box
+  filters by the committed text only.
+- Pressing Enter while a syllable is still being composed (e.g. a lone ㅋ at the end of a chat
+  line) keeps that syllable. In vanilla it is lost: Windows sends Enter before the committed
+  character and the game closes the box first.
 
 ## Install
 
@@ -39,7 +43,14 @@ for this session), `IMEKeyFix.setEnabled(true)`.
 `Display.processMessages` (the window thread, right before `glfwPollEvents`) is patched to call
 `ImmAssociateContextEx(hwnd, NULL, 0)` when no text box is being typed in, and
 `ImmAssociateContextEx(hwnd, NULL, IACE_DEFAULT)` when one is (`Core.currentTextEntryBox` is
-editable, focused and visible). It only calls IMM when that state changes. If a call fails it logs
+editable, focused and visible). It only calls IMM when that state changes.
+
+While the IME is attached, each frame starts by checking whether a syllable is being composed
+(`ImmGetCompositionStringW`). If so, an Enter key event from that frame's `glfwPollEvents` is held
+back (`Keyboard.addKeyEvent` patch) and queued when `processMessages` returns, after the character
+the IME committed in the same poll. `UITextBox2.onKeyEnter` is patched to refresh the box text
+(`updateText`) first, because a character typed in the same frame only reaches `getText()` on
+the next frame. If a call fails it logs
 `[IMEKeyFix] ERROR ...` once and stops switching for the session.
 
 ## Layout

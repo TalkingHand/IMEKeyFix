@@ -36,4 +36,14 @@ public class LuaApi {
     public static String error() {
         return Ime.error;
     }
+
+    /** Tests: next frame, fake Enter pressed during composition, then the IME committing text. */
+    public static void fakeEnterDuringComposition(String text) {
+        Ime.testChar = text;
+    }
+
+    /** How many times Enter was held back behind a committed IME character. */
+    public static double deferredEnter() {
+        return Ime.deferred;
+    }
 }

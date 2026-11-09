@@ -4,6 +4,14 @@
 # kind	target	note
 
 java-patch	org.lwjglx.opengl.Display.processMessages()	OnEnter; assumes it runs every frame on the thread that owns the GLFW window, right before glfwPollEvents (ImmAssociateContextEx fails on any other thread) (Display.java:332, called from RenderThread.lockStepRenderStep)
+java-patch	org.lwjglx.opengl.Display.processMessages()	OnExit; queues Enter held back during the poll (Display.java:335)
+java-patch	org.lwjglx.input.Keyboard.addKeyEvent(int,int)	OnEnter skipOn; called from the GLFW key callback (Display.java:714) with GLFW key codes (257 Enter, 335 KP Enter) and GLFW actions; holds Enter while the IME is composing
+java-call	org.lwjglx.input.Keyboard.addKeyEvent / addCharEvent	re-queue held keys; test fake (KeyEventQueue keeps key and char events in one ordered queue)
+assume	Core.updateKeyboard handles Enter (onKeyEnter) before later char events and drops them once the box stops text entry	the reason Enter is held (Core.java:2061, 2131)
+assume	the IME's committed character (WM_CHAR) arrives in the same glfwPollEvents as the Enter key	checked by hand with the Windows Korean IME only
+java-patch	zombie.ui.UITextBox2.onKeyEnter()	OnEnter; calls updateText() first: putCharacter only changes internalText and getText() follows in update(), so a char from the same frame as Enter was missing from the submitted text (UITextBox2.java:757, 1030, 1261)
+java-call	zombie.ui.UITextBox2.updateText()	text = internalText (masked: stars)
+java-call	imm32 ImmGetCompositionStringW(GCS_COMPSTR)	whether a syllable is being composed when the frame's poll starts
 java-call	org.lwjglx.opengl.Display.getWindow()	GLFW window handle (Display.java:279)
 java-call	org.lwjgl.glfw.GLFWNativeWin32.glfwGetWin32Window(long)	LWJGL bundled in projectzomboid.jar
 java-call	com.sun.jna.NativeLibrary / Function	JNA bundled in projectzomboid.jar (jnidispatch.dll in game folder)
@@ -14,3 +22,4 @@ assume	crafting/building search boxes are ISTextEntryBox	client/Entity/ISUI/Craf
 assume	GLFW drops WM_KEYDOWN with VK_PROCESSKEY	the reason the mod exists; a GLFW update that keeps those keys would make it unnecessary
 lua-call	ISEntityUI.OpenHandcraftWindow / OpenBuildWindow, ISEntityUI.players[0].windows[key].instance	tests only (tests/IMEKeyFix_Test.lua)
 lua-call	ISChat.instance:focus() / unfocus()	tests only
+lua-call	ISTextEntryBox onCommandEntered, setText, getText	tests only

@@ -70,3 +70,28 @@ function T.closeWindow(key)
     local w = window(key)
     if w then w:close() end
 end
+
+-- Enter during composition: Enter and the IME's committed syllable arrive in one frame,
+-- Enter first (as Windows sends them). The box must submit "ab" plus the syllable.
+T.syllable = "ㅋ"
+
+function T.openEnterBox()
+    T.closeBox()
+    T.openBox()
+    T.entered = nil
+    T.box.onCommandEntered = function(self)
+        T.entered = self:getText()
+        log("onCommandEntered text=[" .. tostring(T.entered) .. "]")
+        self:unfocus()
+    end
+    T.box:setText("ab")
+end
+
+function T.fakeEnter()
+    IMEKeyFix.fakeEnterDuringComposition(T.syllable)
+end
+
+function T.enteredWithSyllable()
+    -- cursor position after setText is not the point; the syllable must be in the submitted text
+    return T.entered == "ab" .. T.syllable or T.entered == T.syllable .. "ab"
+end
