@@ -33,5 +33,7 @@ description=한글 입력 상태에서 좀보이드 단축키가 안 먹히는 �
 description=한국어·일본어 IME로 확인했습니다. 필요한 것: Windows, ZombieBuddy 모드, 스팀 실행 옵션 [b]-agentlib:zbNative --[/b] (속성 → 실행 옵션). 클라이언트 전용이며 세이브를 바꾸지 않습니다.
 description=
 description=Source: https://github.com/TalkingHand/IMEKeyFix
+description=
+description=[url=https://ko-fi.com/talkinghands2285][img]https://raw.githubusercontent.com/TalkingHand/IMEKeyFix/main/art/kofi_button.png[/img][/url]
 tags=Build 42;Interface
 visibility=public
